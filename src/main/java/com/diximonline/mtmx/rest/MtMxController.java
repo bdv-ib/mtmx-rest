@@ -3,6 +3,7 @@ package com.diximonline.mtmx.rest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import se.highex.ebe.adaptor.connector.pg.PgParamsMtMsg;
 import se.highex.mtmx.MtMx;
+import com.diximonline.mtmx.utils.LogUtils.PayloadTrace;
 
 
 @Slf4j
@@ -30,15 +32,38 @@ import se.highex.mtmx.MtMx;
 @RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class MtMxController {
 
+	String header_X_Request_ID = "x-request-id";
+	String header_X_Fapi_Interaction_ID = "x-fapi-interaction-id";
+	
+	private MtMx converter = new MtMx();
+	
 	@PostMapping("/convert")
 	public ResponseEntity<String> convertMTMX(@RequestHeader Map<String, String> headers, @RequestBody String body) {
 
-		log.info("[START] CBS REST | MTMX converter: {}", body);
-
+		String requestId = "";
+		
+		if (headers != null && headers.get(header_X_Request_ID) != null) {
+			requestId = headers.get(header_X_Request_ID).toString();
+		} else {
+			requestId = UUID.randomUUID().toString();
+		}
+		
+		String correlationId = "";
+		
+		if (headers != null && headers.get(header_X_Fapi_Interaction_ID) != null) {
+			correlationId = headers.get(header_X_Fapi_Interaction_ID).toString();
+		} else {
+			correlationId = "n/a";
+		}
+		
+		log.info("[START] CBS REST | MTMX converter, requestId: {}, correlationId: {}", requestId, correlationId);
+		PayloadTrace.write("[BODY] CBS REST | MTMX converter, requestId: " + requestId, body);
+		
+		long start = System.nanoTime();
+		
 		try {
 			List<PgParamsMtMsg> msgList = fromXML(body, true, new TypeReference<List<PgParamsMtMsg>>() {});
 			List<PgParamsMtMsg> convMsgList = new ArrayList<PgParamsMtMsg>();
-			final MtMx converter = new MtMx();
 			
 			for (PgParamsMtMsg msg : msgList) {
 			
@@ -46,7 +71,13 @@ public class MtMxController {
 				
 				if (msg != null) {
 					if (msg.getFormat().compareTo(PgParamsMtMsg.TYPE_MT) == 0) {
+						
+						long startConv = System.nanoTime();
+						
 						convertedMsg = converter.ConvertMTToMX(msg);
+						
+						long elapsedConv = System.nanoTime() - startConv;
+						log.debug("CBS REST | MTMX converter | ConvertMTToMX, processing time (ms): {}", elapsedConv/1_000_000);
 						
 						String block4MX = convertedMsg.getBlock4();
 						String msgType = convertedMsg.getMsgType();
@@ -58,7 +89,13 @@ public class MtMxController {
 						convertedMsg.setBlock4(block4MX);
 						
 					} else if (msg.getFormat().compareTo(PgParamsMtMsg.TYPE_MX) == 0) {
+						
+						long startConv = System.nanoTime();
+						
 						convertedMsg = converter.ConvertMXToMT(msg);
+						
+						long elapsedConv = System.nanoTime() - startConv;
+						log.debug("CBS REST | MTMX converter | ConvertMXToMT, processing time (ms): {}", elapsedConv/1_000_000);
 					} else {
 						throw new Exception("Wrong message type");
 					}
@@ -69,9 +106,14 @@ public class MtMxController {
 				convMsgList.add(convertedMsg);
 			}
 			
-			return ResponseEntity.ok().body(toXML(convMsgList, true));
+			ResponseEntity<String> res = ResponseEntity.ok().body(toXML(convMsgList, true));
+			
+			long elapsed = System.nanoTime() - start;
+			log.info("[END] CBS REST | MTMX converter, requestId: {}, processing time (ms): {}", requestId, elapsed/1_000_000);
+			
+			return res;
 		} catch (Exception e) {
-			log.error("CBS REST | Error happened during MTMX convertion: ", e);
+			log.error("[ERROR] CBS REST | Error happened for the requestId {} during MTMX convertion: ", requestId, e);
 			return ResponseEntity.badRequest().body(e.getLocalizedMessage());
 		}
 	}
@@ -81,6 +123,8 @@ public class MtMxController {
     }
   
 	public <T> T fromXML(String xml, boolean ignoreUnknownProps, TypeReference<T> typeReference) throws Exception {
+		
+		long start = System.nanoTime();
 		
 		if (StringUtils.isEmpty(xml))
 			return null;
@@ -93,23 +137,36 @@ public class MtMxController {
 		}
 
 		try {
-			return mapper.readValue(xml, typeReference);
+			T res = mapper.readValue(xml, typeReference);
+			
+			long elapsed = System.nanoTime() - start;
+			log.debug("CBS REST | MTMX converter | fromXML, processing time (ms): {}", elapsed/1_000_000);
+			
+			return res;
 		} catch (JsonProcessingException e) {
-			log.error("fromXML failed for class:" + typeReference, e);
+			log.error("[ERROR] CBS REST | MTMX converter | fromXML, failed for class:" + typeReference, e);
 			throw e;
 		}
 	}
 
 	public <T> String toXML(T object, boolean ifThrow) throws Exception {
+		
+		long start = System.nanoTime();
+		
 		if (object == null)
 			return null;
 
 		XmlMapper  mapper = new XmlMapper ();
 
 		try {
-			return mapper.writeValueAsString(object);
+			String res = mapper.writeValueAsString(object);
+			
+			long elapsed = System.nanoTime() - start;
+			log.debug("CBS REST | MTMX converter | toXML, processing time (ms): {}", elapsed/1_000_000);
+			
+			return res;
 		} catch (JsonProcessingException  e) {
-			log.error("toXML failed for class:" + object.getClass(), e);
+			log.error("[ERROR] CBS REST | MTMX converter | toXML failed for class:" + object.getClass(), e);
 			if (ifThrow)
 				throw e;
 
