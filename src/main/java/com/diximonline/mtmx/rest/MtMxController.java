@@ -82,9 +82,12 @@ public class MtMxController {
 						String block4MX = convertedMsg.getBlock4();
 						String msgType = convertedMsg.getMsgType();
 						
-						block4MX = addNamespaceString(block4MX, "DataPDU", "urn:swift:saa:xsd:saa.2.0");
+						block4MX = addNamespaceString(block4MX, "DataPDU", "urn:cma:stp:xsd:stp.1.0");
 						block4MX = addNamespaceString(block4MX, "AppHdr", "urn:iso:std:iso:20022:tech:xsd:head.001.001.01");
 						block4MX = addNamespaceString(block4MX, "Document", "urn:iso:std:iso:20022:tech:xsd:" + msgType);
+						
+						block4MX = block4MX.replaceAll("(?s)\\s*<Revision>.*?</Revision>", "")
+				                   		   .replaceAll("(?s)\\s*<Header>.*?</Header>", "");
 						
 						convertedMsg.setBlock4(block4MX);
 						
