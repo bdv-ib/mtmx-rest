@@ -23,7 +23,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import se.highex.ebe.adaptor.connector.pg.PgParamsMtMsg;
 import se.highex.mtmx.MtMx;
-import com.diximonline.mtmx.utils.LogUtils.PayloadTrace;
+import com.diximonline.core.utils.LogUtils.PayloadTrace;
+import com.diximonline.mtmx.conv.efts.OperationTypes;
 
 
 @Slf4j
@@ -74,22 +75,38 @@ public class MtMxController {
 						
 						long startConv = System.nanoTime();
 						
-						convertedMsg = converter.ConvertMTToMX(msg);
+						List<String> kw = OperationTypes.extractKeyWords(msg);
+						OperationTypes ot = OperationTypes.detectOperationType(msg.getMsgType(), kw);
+						
+						if (ot != null && ot.converter != null) {
+							log.debug("requestId: {}, found custom internal converter, class {}", requestId, ot.converter.getClass());
+							
+							try {
+								convertedMsg = ot.converter.toModel(msg, null);
+							} catch (Exception e) {
+								log.error("requestId: {}, internal converter failed, will try to request MTMX service", requestId);
+							}
+						}
+
+						if (convertedMsg == null) {
+							log.debug("requestId: {}, requesting MTMX service", requestId);
+							convertedMsg = converter.ConvertMTToMX(msg);
+							
+							String block4MX = convertedMsg.getBlock4();
+							String msgType = convertedMsg.getMsgType();
+							
+							block4MX = addNamespaceString(block4MX, "DataPDU", "urn:cma:stp:xsd:stp.1.0");
+							block4MX = addNamespaceString(block4MX, "AppHdr", "urn:iso:std:iso:20022:tech:xsd:head.001.001.01");
+							block4MX = addNamespaceString(block4MX, "Document", "urn:iso:std:iso:20022:tech:xsd:" + msgType);
+							
+							block4MX = block4MX.replaceAll("(?s)\\s*<Revision>.*?</Revision>", "")
+					                   		   .replaceAll("(?s)\\s*<Header>.*?</Header>", "");
+							
+							convertedMsg.setBlock4(block4MX);
+						}
 						
 						long elapsedConv = System.nanoTime() - startConv;
 						log.debug("CBS REST | MTMX converter | ConvertMTToMX, processing time (ms): {}", elapsedConv/1_000_000);
-						
-						String block4MX = convertedMsg.getBlock4();
-						String msgType = convertedMsg.getMsgType();
-						
-						block4MX = addNamespaceString(block4MX, "DataPDU", "urn:cma:stp:xsd:stp.1.0");
-						block4MX = addNamespaceString(block4MX, "AppHdr", "urn:iso:std:iso:20022:tech:xsd:head.001.001.01");
-						block4MX = addNamespaceString(block4MX, "Document", "urn:iso:std:iso:20022:tech:xsd:" + msgType);
-						
-						block4MX = block4MX.replaceAll("(?s)\\s*<Revision>.*?</Revision>", "")
-				                   		   .replaceAll("(?s)\\s*<Header>.*?</Header>", "");
-						
-						convertedMsg.setBlock4(block4MX);
 						
 					} else if (msg.getFormat().compareTo(PgParamsMtMsg.TYPE_MX) == 0) {
 						
